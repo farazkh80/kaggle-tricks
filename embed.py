@@ -37,7 +37,7 @@ for file_name in os.listdir("tricks"):
     tips_tricks.extend([{'trick': t, 'file': file_name} for t in tricks])
 
 tips_tricks_df = pd.DataFrame(tips_tricks, columns=['trick', 'file'])
-co = cohere.Client()
+co = cohere.Client(os.environ['CO_API_KEY'])
 
 # embed the tips 
 with st.spinner("Embedding tips..."):
