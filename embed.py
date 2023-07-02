@@ -3,9 +3,10 @@ import regex as re
 import os
 
 import cohere 
+import openai
 import umap
 
-import plotly.graph_objects as go
+import plotly.express as px
 import streamlit as st
 
 @st.cache_data
@@ -26,6 +27,28 @@ def embed(text):
 def reduce(embeds):
     reducer = umap.UMAP(n_neighbors=20) 
     return reducer.fit_transform(embeds)
+
+@st.cache_data
+def gen_summaries(texts):
+    prompt = f"""
+    # Task
+    Given the list of items below, summarize the list of items in 3-4 bullet points.
+
+    # List of items
+
+    """
+    summaries = []
+    for text in texts:
+        res = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt+text},
+            ],
+            max_tokens=500
+        )
+        summaries.append(res.choices[0].message.content)
+    return summaries
 
 st.title("""Kaggle Tips and Tricks""")
 
@@ -56,16 +79,30 @@ with st.spinner("Clustering tips..."):
     kmeans = KMeans(n_clusters=k, random_state=0).fit(umap_embeds)
     tips_tricks_df['cluster'] = kmeans.labels_
 
-colors = ['red', 'green', 'blue', 'yellow', 'orange', 'purple', 'pink', 'brown', 'black', 'gray', 'cyan', 'magenta']
-tips_tricks_df['color'] = tips_tricks_df['cluster'].apply(lambda x: colors[x])
-
-
 from textwrap import wrap
 tips_tricks_df['trick'] = tips_tricks_df['trick'].apply(lambda x: "<br>".join(wrap(x, width=50)))
 
-hover_template = "<b>Trick:</b>%{text}<br><b>"
-c_fig = go.Figure(go.Scatter(x=tips_tricks_df["x"], y=tips_tricks_df["y"], mode='markers', marker=dict(color=tips_tricks_df["color"]), text=tips_tricks_df['trick'], hovertemplate=hover_template))
+# group by cluster and concat all tricks
+with st.spinner("Generating summaries..."):
+    cluster_groups = tips_tricks_df.groupby('cluster').agg({'trick': lambda x: "\n".join(x)}).reset_index()
+    cluster_groups['summary'] = gen_summaries(cluster_groups['trick'].tolist())
+    tips_tricks_df['trick_cluster_summary'] = cluster_groups['summary'][tips_tricks_df['cluster']].values
 
-st.plotly_chart(c_fig, use_container_width=True)
+tips_tricks_df['color'] = tips_tricks_df['cluster'].astype(str)
+c_fig = px.scatter(tips_tricks_df, x="x", y="y", color="color",
+                   hover_data={
+                          'x': False,
+                          'y': False,
+                          'color': False,
+                          'trick': True,
+                          'file': False,
+                          'cluster': False,
+                          'trick_cluster_summary': False
+                          })
 
-st.dataframe(tips_tricks_df[['trick', 'file']])
+st.plotly_chart(c_fig, use_container_width=True, theme="streamlit")
+
+st.write("## Summaries")
+for i, row in cluster_groups.iterrows():
+    with st.expander("Cluster "+str(row['cluster'])):
+        st.markdown(row['summary'])
